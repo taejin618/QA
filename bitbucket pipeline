@@ -1,0 +1,223 @@
+/*UI-TEST-KATALNON*/
+def isRunningMvnContainer = new String();
+
+pipeline {
+    agent any
+    
+    environment {
+        BUILD_RESULT = '$BUILD_STATUS'
+        aws_cli_container="hc_ams_aws_cli"
+        run_container="mvn_jdk17_atlas"
+    } 
+
+    stages {        
+        stage('git clone hc-common') {
+            steps {
+                dir('katalon') {
+                    //git branch:"${TARGET_BRANCH}", url:"https://${BITBUCKET_ID}:${BITBUCKET_ACCESS_KEY}@bitbucket.org/ihunet/hc-common.git"
+                    git branch:"${TARGET_BRANCH}", url:"https://${BITBUCKET_ID}:${BITBUCKET_ACCESS_KEY}@bitbucket.org/ihunet/b2c_qa_automation.git"
+                }                    
+            }
+        }
+
+        stage('run test') {
+            steps {
+                sh "echo '${env.WORKSPACE}'"
+                sh "echo '${env.JOB_NAME}'"
+                sh """docker run -t --rm  -m 1024m --cpus=2  -v /opt/jenkinsDir/workspace/${env.JOB_NAME}/katalon_test:/tmp/project katalonstudio/katalon katalonc.sh -projectPath=/tmp/project -browserType="Chrome" -retry=0 -statusDelay=15 -testSuitePath="Test Suites/suite" -apiKey=f2cc6a94-2a4a-4435-b15a-9c0911989ada"""
+            }
+        }
+
+        /*
+
+        stage('send hc-common source to container') {
+            steps {
+                sh 'pwd'
+                sh 'docker cp hc-common ${run_container}:/opt/hc-common'
+            }
+        }
+        
+        stage('java build hc-common') {
+            steps {
+                sh 'docker exec -i ${run_container} sh -c "cd /opt/hc-common;mvn clean install;" '
+            }
+        }
+        
+        stage('git clone hc-atlas') {
+            steps {
+                dir('hc-atlas') {
+                    git branch:"${TARGET_BRANCH}", url:"https://${BITBUCKET_ID}:${BITBUCKET_ACCESS_KEY}@bitbucket.org/ihunet/hc-atlas.git"
+                }
+            }
+        }
+        
+        stage('send hc-atlas source to container') {
+            steps {
+                sh 'docker cp hc-atlas ${run_container}:/opt/hc-atlas'
+            }
+        }
+        
+        
+        stage('java build hc-atlas') {
+            steps {
+                //sh 'docker exec -i ${run_container} sh -c "cd /opt/hc-account;mvn clean package -Dmaven.test.skip=true;" '
+                //sh 'docker exec -i ${run_container} sh -c "cd /opt/hc-account;mvn clean package  -Dmaven.test.skip=true -P qa;" '
+                sh 'docker exec -i ${run_container} sh -c "cd /opt/hc-atlas;mvn clean package -P qa;" '
+            }
+        }
+ 
+        
+        
+        
+        stage('get war file from jenkins') {
+            steps {
+                sh 'docker cp ${run_container}:/opt/hc-atlas/target/atlas-service-1.0.0-SNAPSHOT.war .'
+            }
+        }
+        
+        
+        // -------- git need to have Dockerfile ------
+        stage('make Run Docker File') {
+            steps {
+                // hc-aws
+                sh '''
+                echo 'FROM azul/zulu-openjdk:17.0.2-17.32.13
+# Locale
+RUN apt-get -qq update && \
+    apt-get -qqy install gnupg2 locales && \
+    locale-gen ko_KR.UTF-8
+
+# Timezone
+RUN apt-get -qqy install -y tzdata && \
+    rm /etc/localtime && \
+    ln -s /usr/share/zoneinfo/Asia/Seoul /etc/localtime && \
+    dpkg-reconfigure --frontend noninteractive tzdata
+
+# Clean APT
+# RUN rm -rf /var/lib/apt/lists/*
+
+# Language
+ENV LANG ko_KR.UTF-8
+ENV LANGUAGE ko_KR:ko
+ENV LC_ALL ko_KR.UTF-8
+
+
+COPY ./atlas-service-1.0.0-SNAPSHOT.war /opt/
+# RUN chmod +x /usr/local/bin/mvn-entrypoint.sh
+CMD java -jar /opt/atlas-service-1.0.0-SNAPSHOT.war
+
+#ENTRYPOINT ["/usr/local/bin/mvn-entrypoint.sh"]
+#CMD ["mvn"]' > Dockerfile
+                '''
+            }
+        }
+        
+        // -------------------------------------------
+        
+        stage('make Docker') {
+            steps {
+                sh 'docker build -t 625139225327.dkr.ecr.ap-northeast-2.amazonaws.com/hunetcg-back-atlas-qa:latest .'
+            }
+        } 
+        
+        
+        //stage('docker run') {
+        //    steps {
+        //        sh 'docker run -itd --name test_run_jdk_cont test_run_jdk_docker'
+        //    }
+        //} 
+        
+        
+        
+        
+        // initially need to install aws-cli once
+        stage('docker run aws-cli') {
+            steps {
+                sh 'docker run --rm -d -i -t --name=${aws_cli_container} --entrypoint=sh -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -e AWS_DEFAULT_REGION=ap-northeast-2 hunet/aws-cli'
+            }
+        }
+
+        
+
+        stage('docker exec aws-cli') {
+            steps {
+                sh 'export DOCKER_LOGIN_SCRIPT=$(docker exec ${aws_cli_container} aws ecr get-login --region ap-northeast-2 --no-include-email)'
+            }
+        }
+        
+        
+
+        stage('docker image push1') {            
+            steps {
+                script {
+                    docker.withRegistry("https://625139225327.dkr.ecr.ap-northeast-2.amazonaws.com", "ecr:ap-northeast-2:AWS_AMI") {
+                        docker.image("625139225327.dkr.ecr.ap-northeast-2.amazonaws.com/hunetcg-back-atlas-qa:latest").push()
+                    }   
+                }
+            }
+        }
+        
+        stage('deploy rolling update') {           
+
+            
+            steps {
+                script {
+                     sh 'docker exec ${aws_cli_container} aws ecs update-service --cluster ECS-HUNETCG-QA --service Hunetcg-Back-Atlas-QA --task-definition Hunetcg-Back-Atlas-QA --force-new-deployment'
+                }
+            }
+        }
+        
+        
+        
+    }
+    post {
+        always {
+            echo 'i got success'
+            sh 'docker stop ${aws_cli_container}'
+            sh 'docker stop ${run_container}'
+            
+        }
+        success {
+            echo """${env.BUILD_URL}"""            
+            emailext (
+                to:'shyang@hunet.co.kr, kwangbum.ha@hunet.co.kr, sp_unit_be@hunet.co.kr, sp_unit_qa@hunet.co.kr'
+                , mimeType: 'text/html'
+                , body: """
+                <p>${BUILD_RESULT}:job '${env.JOB_NAME}[${env.BUILD_NUMBER}]'</p>
+                <p>Check console logs;<a href='${env.BUILD_URL}'>${env.JOB_NAME}[${env.BUILD_NUMBER}]'</a>&QUOT;</p>            
+                """
+                , subject: 'jenkins Build Result: job name: HC-Atlas'
+            );
+            echo """${env.BUILD_URL}"""
+        }
+        failure {
+            emailext (
+                to:'shyang@hunet.co.kr,feedbackman@hunet.co.kr'
+                , mimeType: 'text/html'
+                , body: """
+                <p>${BUILD_RESULT}:job '${env.JOB_NAME}[${env.BUILD_NUMBER}]'</p>
+                <p>Check console logs;<a href='${env.BUILD_URL}'>${env.JOB_NAME}[${env.BUILD_NUMBER}]'</a>&QUOT;</p>            
+                """
+                , subject: 'jenkins Build Result: job name: HC-Atlas'
+            );
+            echo """${env.BUILD_URL}"""
+
+        }        
+        */
+    }
+    
+}
+/*
+pipeline {
+    agent any
+        stages {
+        stage('Test') {
+            steps {
+                dir('C:\\Users\\taejin618\\katalonstudio\\test'){
+                    bat 'docker run -t --rm  -m 4096m --cpus=2  -v %CD%:/tmp/project katalonstudio/katalon katalonc.sh -projectPath=/tmp/project -browserType="Chrome" -retry=0 -statusDelay=15 -testSuitePath="Test Suites/suite" -apiKey=f2cc6a94-2a4a-4435-b15a-9c0911989ada'
+                }
+            }
+        }
+    }
+}
+*/
