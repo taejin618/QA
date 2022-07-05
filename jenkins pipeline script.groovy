@@ -2,6 +2,8 @@
 
 파이프라인 definition 선택
 
+pipeline script 선택
+
 아래 파이프라인 스크립트 입력
 
 pipeline {
