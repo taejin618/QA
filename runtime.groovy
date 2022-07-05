@@ -1,0 +1,1 @@
+./katalonc -noSplash -runMode=console -projectPath="C:\Users\taejin618\KatalonStudio\CheckUp\CheckUp.prj" -retry=0 -testSuitePath="Test Suites/Test_1" -browserType="Chrome" -executionProfile="default" -apiKey="f7739fa0-1934-40bd-a24a-4a48f2031974" --config -proxy.auth.option=NO_PROXY -proxy.system.option=NO_PROXY -proxy.system.applyToDesiredCapabilities=true
